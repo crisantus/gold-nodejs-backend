@@ -1,0 +1,15 @@
+@baseUrl = http://localhost:__PORT__/api
+
+GET {{baseUrl}}/health
+
+### Create your own account; admin roles cannot be chosen at signup.
+POST {{baseUrl}}/auth/sign-up
+Content-Type: application/json
+
+{"name":"Example User","email":"user@example.com","password":"replace-with-a-long-password"}
+
+### Login to receive access and refresh credentials.
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{"email":"user@example.com","password":"replace-with-a-long-password"}

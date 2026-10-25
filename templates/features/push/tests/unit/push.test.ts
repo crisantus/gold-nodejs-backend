@@ -1,0 +1,22 @@
+import { afterEach, expect, it, vi } from 'vitest';
+const mocks = vi.hoisted(() => ({ upsert: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn(), send: vi.fn() }));
+vi.mock('../../src/utils/prisma.js', () => ({ prisma: { deviceToken: { upsert: mocks.upsert, findMany: mocks.findMany, deleteMany: mocks.deleteMany } } }));
+vi.mock('firebase-admin/app', () => ({ applicationDefault: vi.fn(), cert: vi.fn(), getApps: () => [], initializeApp: () => ({}) }));
+vi.mock('firebase-admin/messaging', () => ({ getMessaging: () => ({ sendEachForMulticast: mocks.send }) }));
+import { env } from '../../src/config/env.js';
+import { registerDevice, sendPush } from '../../src/services/push.service.js';
+const initialEnabled = env.PUSH_ENABLED; const initialKey = env.PUSH_TOKEN_KEY;
+afterEach(() => { env.PUSH_ENABLED = initialEnabled; env.PUSH_TOKEN_KEY = initialKey; vi.clearAllMocks(); });
+it('does not call Firebase when disabled', async () => { env.PUSH_ENABLED = false; expect(await sendPush('user', { title: 'Test', body: 'Test' })).toEqual({ outcome: 'skipped', accepted: 0 }); expect(mocks.send).not.toHaveBeenCalled(); });
+it('encrypts device tokens at rest and removes invalid registrations', async () => {
+  env.PUSH_ENABLED = true; env.PUSH_TOKEN_KEY = 'a'.repeat(64);
+  const token = 'private-device-token-for-test';
+  await registerDevice('user', token);
+  const call = mocks.upsert.mock.calls[0]![0] as { create: { encryptedToken: string; tokenHash: string } };
+  expect(call.create.encryptedToken).not.toContain(token); expect(call.create.tokenHash).not.toBe(token);
+  mocks.findMany.mockResolvedValue([{ id: 'device', encryptedToken: call.create.encryptedToken }]);
+  mocks.send.mockResolvedValue({ successCount: 0, responses: [{ error: { code: 'messaging/registration-token-not-registered' } }] });
+  expect(await sendPush('user', { title: 'Test', body: 'Test' })).toEqual({ outcome: 'failed', accepted: 0 });
+  expect(mocks.send.mock.calls[0]![0].tokens).toEqual([token]);
+  expect(mocks.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['device'] } } });
+});
