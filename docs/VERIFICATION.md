@@ -14,7 +14,9 @@ recommended and configured in the included GitHub Actions workflows.
 All targets passed formatting, lint, type checking, and production compilation.
 Generated presets were installed independently. Tests used disposable loopback
 MySQL 9.2 and PostgreSQL 17.11 instances; existing project databases were untouched.
-The included Linux CI targets MySQL 8.4/PostgreSQL 17 but has not been run on GitHub.
+The Linux GitHub Actions workflow also passed all five jobs on Node 24, using
+MySQL 8.4/PostgreSQL 17 for the four generated-app presets. See the
+[successful run](https://github.com/crisantus/gold-nodejs-backend/actions/runs/40184142454).
 
 Database checks cover refresh rotation/replay, concurrent token consumption,
 logout/password-change revocation, account blocking, cookie CSRF, current admin
@@ -34,8 +36,8 @@ Additional checks:
 
 Live SMTP/Resend acceptance, Firebase device delivery, and Cloudinary transfers
 were not tested because production/provider credentials were not supplied.
-Docker containers, Flutter client examples, and hosted GitHub Actions were not
-executed locally. Examples and generated instructions explain remaining setup;
+Generated production Docker images and Flutter client examples were not executed.
+Examples and generated instructions explain remaining setup;
 no provider delivery, deployment, or production readiness is claimed from unit tests.
 
 The local installable artifact is release/gold-backend-0.1.0.tgz. No package has
@@ -54,4 +56,15 @@ when npm passes global installation settings into Git preparation. The
 `--install-links` flag ensures the installed package survives cleanup of npm's
 temporary Git checkout. CI includes the same global Git installation smoke test.
 
-The public GitHub installation will be checked after the first push.
+The repository is public at
+[crisantus/gold-nodejs-backend](https://github.com/crisantus/gold-nodejs-backend).
+The README's GitHub installation command was also tested directly against that
+public repository with Node 24.22.1 and npm 11.19.0, in an isolated temporary
+global prefix. No manual clone, build, or link was needed.
+
+The installed CLI's interactive wizard was exercised with the default MySQL,
+both-client, Swagger/Postman selections. Dependency installation succeeded.
+The local sandbox blocked Prisma from updating its existing engine cache;
+setup was resumed outside that sandbox and completed Prisma generation, API
+exports, formatting, lint, type checks, all eight unit tests, and compilation.
+This app setup check did not connect to a database or send provider messages.
