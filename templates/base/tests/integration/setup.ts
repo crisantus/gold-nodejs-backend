@@ -1,13 +1,18 @@
-import 'dotenv/config';
+import "dotenv/config";
 const url = process.env.TEST_DATABASE_URL;
-if (process.env.GOLD_ALLOW_DB_TESTS !== 'true' || !url) throw new Error('Explicit TEST_DATABASE_URL and GOLD_ALLOW_DB_TESTS=true are required.');
+if (process.env.GOLD_ALLOW_DB_TESTS !== "true" || !url)
+  throw new Error("Explicit TEST_DATABASE_URL and GOLD_ALLOW_DB_TESTS=true are required.");
 const parsed = new URL(url);
-if (!/^\/gold_test(?:_[a-z0-9_]+)?$/.test(parsed.pathname) || !['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname)) throw new Error('Integration tests require a loopback disposable gold_test database.');
+if (
+  !/^\/gold_test(?:_[a-z0-9_]+)?$/.test(parsed.pathname) ||
+  !["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname)
+)
+  throw new Error("Integration tests require a loopback disposable gold_test database.");
 process.env.DATABASE_URL = url;
-process.env.NODE_ENV = 'test';
-process.env.JWT_SECRET = 'integration-jwt-secret-0000000000000000000000000000000000000000000';
-process.env.CSRF_SECRET = 'integration-csrf-secret-000000000000000000000000000000000000000000';
-process.env.EMAIL_ENABLED = '__TEST_EMAIL_ENABLED__';
-process.env.PUSH_ENABLED = 'false';
-process.env.UPLOADS_ENABLED = 'false';
-process.env.DOCS_ENABLED = 'false';
+process.env.NODE_ENV = "test";
+process.env.JWT_SECRET = "integration-jwt-secret-0000000000000000000000000000000000000000000";
+process.env.CSRF_SECRET = "integration-csrf-secret-000000000000000000000000000000000000000000";
+process.env.EMAIL_ENABLED = "__TEST_EMAIL_ENABLED__";
+process.env.PUSH_ENABLED = "false";
+process.env.UPLOADS_ENABLED = "false";
+process.env.DOCS_ENABLED = "false";

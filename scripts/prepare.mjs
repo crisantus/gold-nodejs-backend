@@ -1,3 +1,4 @@
+import { writeBuildInfo } from "./build-info.mjs";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import process from "node:process";
@@ -43,3 +44,5 @@ if (required.some((path) => !existsSync(path))) {
 }
 
 run([compiler, "-p", "tsconfig.build.json"]);
+
+writeBuildInfo(root);

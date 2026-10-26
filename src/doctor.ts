@@ -21,7 +21,7 @@ export async function doctor(directory = process.cwd()): Promise<boolean> {
     );
   } catch {
     console.log(
-      "INFO No generated project detected here. Use gold_backend create.",
+      "INFO No generated project detected here. Use gold-backend create.",
     );
   }
   return supported;

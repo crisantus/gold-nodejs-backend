@@ -9,7 +9,11 @@ Read AGENTS.md, docs/development/BACKEND_STYLE_GUIDE.md, gold.config.json,
 and analogous route/schema/controller/service files before editing. Consult
 SETUP.md for the selected provider and client-mode requirements.
 
-Keep routes declarative, controllers focused on HTTP, and services focused on
+Use explicit Express router.get/post/patch/delete calls with named validation
+middleware and controllers; mount feature routers using router.use. Do not use
+route-object catalogs or custom registration wrappers. Keep documentation-only
+contracts in src/docs aligned with routers and shared validation schemas.
+Keep controllers focused on HTTP, and services focused on
 typed inputs, business rules, ownership and transactions. Use the shared Prisma
 client and public field selections. Do not add a repository/base-service layer
 just to wrap Prisma. Validate bodies, queries, params and socket events; derive
@@ -41,3 +45,24 @@ and test real success, denied-access and failure behavior. Run npm run verify.
 Use the documented disposable database workflow for integration tests; mocks
 cannot establish concurrency or persistence guarantees. Regenerate selected
 Swagger/Postman exports for route changes. Report anything not verified.
+
+Follow the project's KRI-style readability and layout standard: explicit Express
+routers, services grouped in services/<feature>/, focused controller functions,
+named custom errors from errors/index.ts, ERROR_CODES for application identifiers,
+and StatusCodes from http-status-codes for HTTP statuses. Keep application files
+multiline and formatted. Explain startup/middleware
+order, permissions, transactions and lifecycle decisions with purpose comments.
+
+Keep email sender/templates under utils/email and Firebase setup under
+utils/firebase; domain notification services live in services/notifications.
+Only selected capabilities contribute files/imports. Preserve encrypted device
+tokens, lazy Firebase initialization, one-time auth actions, safe errors and
+notification persistence independently of push. See BACKEND_STYLE_GUIDE.md for
+examples and middleware ordering. Run npm run format and npm run verify after changes.
+
+Use the exact route schema with validatedBody/validatedQuery/validatedParams in
+controllers and requireActor for authenticated context. Keep the private validation
+cache's schema-checked assertion inside the validation helper; do not scatter request
+casts or non-null assertions through controllers. Transforms execute once. Socket
+state/events need explicit types and runtime validation; JSON-schema/provider values
+stay unknown until checked. Preserve safe errors when forwarding after headers are sent.

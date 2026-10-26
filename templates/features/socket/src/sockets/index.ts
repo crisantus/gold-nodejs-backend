@@ -1,54 +1,119 @@
-import type { Server as HttpServer } from 'node:http';
-import { Server } from 'socket.io';
-import { parse } from 'cookie';
-import { z } from 'zod';
-import { allowedOrigins } from '../config/env.js';
-import { authenticateAccess } from '../services/auth/session.service.js';
-import { AppError } from '../errors/app-error.js';
+import type { Server as HttpServer } from "node:http";
+import { Server } from "socket.io";
+import { parse } from "cookie";
+import { z } from "zod";
+import { allowedOrigins } from "../config/env.js";
+import { authenticateAccess } from "../services/auth/session.service.js";
+import { UnauthenticatedError, ERROR_CODES } from "../errors/index.js";
+import type { ClientEvents, ServerEvents, InterServerEvents, SocketData } from "./socket.types.js";
 
-let activeServer: Server | undefined;
+type GoldSocketServer = Server<ClientEvents, ServerEvents, InterServerEvents, SocketData>;
+let activeServer: GoldSocketServer | undefined;
 const pingSchema = z.strictObject({ nonce: z.string().max(64) });
-/** Attach real-time transport to the HTTP server and authorize user rooms server-side. */
-export function attachSockets(httpServer: HttpServer): Server {
-  const io = new Server(httpServer, { maxHttpBufferSize: 16384, cors: { origin: allowedOrigins, credentials: true }, allowRequest: (req, callback) => callback(null, !req.headers.origin || allowedOrigins.includes(req.headers.origin)) });
+
+/** Socket.IO forwards only this safe message/data when authentication fails. */
+class SocketAuthenticationError extends Error {
+  readonly data = {
+    status: false,
+    message: "Please sign in again",
+    errorCode: ERROR_CODES.SOCKET_UNAUTHORIZED,
+  };
+  constructor() {
+    super("Authentication failed");
+  }
+}
+
+/** Attach real-time transport and authorize user rooms through the current persisted session. */
+export function attachSockets(httpServer: HttpServer): GoldSocketServer {
+  const io = new Server<ClientEvents, ServerEvents, InterServerEvents, SocketData>(httpServer, {
+    maxHttpBufferSize: 16384,
+    cors: { origin: allowedOrigins, credentials: true },
+    allowRequest: (req, callback) =>
+      callback(null, !req.headers.origin || allowedOrigins.includes(req.headers.origin)),
+  });
   activeServer = io;
   io.use(async (socket, next) => {
     try {
-      const value: unknown = socket.handshake.auth.token;
-      const token = typeof value === 'string' ? value : parse(socket.handshake.headers.cookie ?? '').accessToken;
-      if (!token) throw new AppError(401, 'AUTHENTICATION_REQUIRED', 'Please sign in');
-      const actor = await authenticateAccess(token);
-      socket.data.actor = actor;
+      const auth: unknown = socket.handshake.auth;
+      const supplied =
+        typeof auth === "object" && auth !== null && "token" in auth ? auth.token : undefined;
+      const token =
+        typeof supplied === "string"
+          ? supplied
+          : parse(socket.handshake.headers.cookie ?? "").accessToken;
+      if (!token)
+        throw new UnauthenticatedError("Please sign in", ERROR_CODES.AUTHENTICATION_REQUIRED);
+      socket.data.actor = await authenticateAccess(token);
       socket.data.token = token;
       next();
-    } catch { const error = new Error('Authentication failed') as Error & { data?: unknown }; error.data = { status: false, message: 'Please sign in again', errorCode: 'SOCKET_UNAUTHORIZED' }; next(error); }
+    } catch {
+      next(new SocketAuthenticationError());
+    }
   });
-  io.on('connection', (socket) => {
-    void socket.join(`user:${socket.data.actor.id as string}`);
-    let windowStarted = Date.now(); let count = 0;
-    // Every event rechecks the session; successful handshake does not grant permanent access.
+  io.on("connection", (socket) => {
+    const actor = socket.data.actor;
+    const token = socket.data.token;
+    if (!actor || !token) {
+      socket.disconnect(true);
+      return;
+    }
+    void socket.join(`user:${actor.id}`);
+    let windowStarted = Date.now();
+    let count = 0;
+    // A successful handshake does not grant permanent access: recheck every event.
     socket.use(async (_packet, next) => {
-      if (Date.now() - windowStarted > 60000) { count = 0; windowStarted = Date.now(); }
-      if (++count > 60) { socket.disconnect(true); return; }
-      try { socket.data.actor = await authenticateAccess(socket.data.token as string); next(); } catch { socket.disconnect(true); }
+      if (Date.now() - windowStarted > 60000) {
+        count = 0;
+        windowStarted = Date.now();
+      }
+      if (++count > 60) {
+        socket.disconnect(true);
+        return;
+      }
+      try {
+        socket.data.actor = await authenticateAccess(token);
+        next();
+      } catch {
+        socket.disconnect(true);
+      }
     });
-    // A bounded lifetime also prevents idle revoked connections from receiving future broadcasts.
-    const lifetime = setInterval(() => { void authenticateAccess(socket.data.token as string).catch(() => socket.disconnect(true)); }, 30000).unref();
-    socket.on('system:ping', (input: unknown, acknowledge: unknown) => {
-      if (typeof acknowledge !== 'function') return;
+    // Idle revoked sessions must also lose access to future broadcasts.
+    const lifetime = setInterval(() => {
+      void authenticateAccess(token).catch(() => socket.disconnect(true));
+    }, 30000).unref();
+    socket.on("system:ping", (input, acknowledge) => {
+      if (typeof acknowledge !== "function") return;
       const parsed = pingSchema.safeParse(input);
-      acknowledge(parsed.success ? { status: true, message: 'Connected', data: { nonce: parsed.data.nonce } } : { status: false, message: 'Invalid event payload', errorCode: 'VALIDATION_ERROR' });
+      if (!parsed.success) {
+        acknowledge({
+          status: false,
+          message: "Invalid event payload",
+          errorCode: ERROR_CODES.VALIDATION_ERROR,
+        });
+        return;
+      }
+      acknowledge({ status: true, message: "Connected", data: { nonce: parsed.data.nonce } });
     });
-    socket.on('disconnect', () => clearInterval(lifetime));
+    socket.on("disconnect", () => clearInterval(lifetime));
   });
   return io;
 }
 
-/** Internal services emit to validated active recipients, not arbitrary caller-selected rooms. */
+/** Emit only to this recipient's still-active sessions; room membership alone is insufficient. */
 export async function emitToUser(userId: string, event: string, data: unknown): Promise<void> {
   if (!activeServer) return;
   for (const socket of await activeServer.in(`user:${userId}`).fetchSockets()) {
-    try { const actor = await authenticateAccess(socket.data.token as string); if (actor.id === userId) socket.emit(event, { status: true, message: 'Update received', data }); }
-    catch { socket.disconnect(true); }
+    const token = socket.data.token;
+    if (!token) {
+      socket.disconnect(true);
+      continue;
+    }
+    try {
+      const actor = await authenticateAccess(token);
+      if (actor.id === userId)
+        socket.emit(event, { status: true, message: "Update received", data });
+    } catch {
+      socket.disconnect(true);
+    }
   }
 }

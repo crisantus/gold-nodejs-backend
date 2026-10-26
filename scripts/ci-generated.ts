@@ -31,6 +31,7 @@ const presets = {
   resend: {
     database: "postgresql",
     email: "resend",
+    verifyEmail: true,
     docs: "postman",
     clients: "browser",
   },

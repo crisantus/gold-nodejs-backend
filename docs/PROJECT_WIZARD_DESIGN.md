@@ -231,9 +231,11 @@ KRI currently has `generate-swagger.ts`, `patch-swagger.ts`, and
 `generate-postman.ts`, composed by its `generate:all` script. Keep the convenient
 export experience while reducing separate documentation definitions and patches.
 
-Define each documented operation's method, path, auth, schemas, responses,
-examples, and stable operation ID alongside the route. Reuse the request
-validation schemas for OpenAPI where supported. Do not infer business semantics
+Register HTTP routes with explicit Express router methods, named validation
+middleware and named controllers, following KRI's router style. Maintain each
+documented operation's method, path, auth, schemas, responses, examples, and
+stable operation ID in separate documentation-only contracts under src/docs.
+Reuse the router's request validation schemas for OpenAPI where supported. Do not infer business semantics
 or complete request/response schemas from route names alone.
 
 Generate an OpenAPI document from those definitions, then use it for selected

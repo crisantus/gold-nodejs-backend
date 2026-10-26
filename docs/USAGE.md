@@ -6,13 +6,13 @@ After installing Gold Backend as described in the [README](../README.md), open
 a terminal in the parent folder where you keep your projects:
 
 ```bash
-gold_backend create
+gold-backend create
 ```
 
 Enter your project name when asked. Gold creates that folder inside your current
 directory. This guide uses `my-api` as an example. Names start with a lowercase
 letter and can contain lowercase letters, numbers, hyphens, and underscores.
-You can also supply the name directly with `gold_backend create my-api`.
+You can also supply the name directly with `gold-backend create my-api`.
 
 Use the arrow keys to navigate, **Space** to select additional features, and
 **Enter** to continue. The wizard asks:
@@ -36,6 +36,50 @@ Use the arrow keys to navigate, **Space** to select additional features, and
 Review the final configuration and confirm creation. Credentials go in the
 generated `.env` afterward. The generator refuses to overwrite an existing
 project folder.
+
+## Update notices and uninstalling the tool
+
+`gold-backend` and the older `gold_backend` spelling run the same CLI.
+Before creation, a short GitHub check compares the installed Git revision with
+the repository's default branch. A newer commit produces an update notice and
+these commands; you can continue using the installed version:
+
+```bash
+gold-backend check-update
+gold-backend update
+```
+
+`update` reinstalls the global CLI from GitHub. It keeps a custom global install
+prefix when detected. To install or update an older CLI without these commands:
+
+```bash
+npm install -g --install-links github:crisantus/gold-nodejs-backend
+```
+
+The check covers commits even when `package.json` keeps the same version. Builds
+record their Git revision during preparation/compilation. A source checkout ahead
+of GitHub is not reported as outdated. If the installed revision is unknown, Gold
+shows the reinstall command rather than claiming it is current.
+
+Update notices are optional. The whole automatic check has a short deadline;
+network failures, rate limits, and malformed responses do not block creation.
+`check-update` exits nonzero if it cannot determine update status. To skip automatic
+checks, use `--no-update-check` on `create`, or set
+`GOLD_BACKEND_NO_UPDATE_CHECK=1`. CI environments skip automatic checks by default.
+The check requests only public repository metadata; it uploads no project files.
+
+To uninstall the global generator:
+
+```bash
+gold-backend uninstall
+# Equivalent command, including for older installations:
+npm uninstall -g gold-backend
+```
+
+This removes the CLI and its command aliases. Generated application code, local
+application dependencies, configuration, and databases are retained. For a generator
+installed as a local npm dependency instead, run `npm uninstall gold-backend` in
+that npm project. Generated backends do not require the generator as a dependency.
 
 ## Open the generated project and configure the database
 
@@ -263,20 +307,40 @@ The generated project follows:
 
 ```text
 src/
-  routes/        Route definitions and access rules
+  routes/        Express routers and explicit middleware chains
+  docs/          Documentation-only API contracts, when selected
   middlewares/   Authentication, validation, and request handling
   controllers/   HTTP input and responses
-  services/      Business logic and permissions
+  services/      Feature folders: auth/, admin/, notifications/, uploads/
   validators/    Zod request schemas
   config/        Environment and feature configuration
   errors/        Shared application errors
-  utils/         Focused shared helpers
+  utils/         Shared helpers, email sender/templates, selected Firebase setup
   types/         Shared TypeScript types
 prisma/          Database schema and migrations
 tests/           Unit and guarded database integration tests
 docs/            Coding guides and selected API exports
 scripts/         Development and setup commands
 ```
+
+Routes follow the KRI backend standard: normal Express router calls, named
+controllers, and schemas from validator files. For example, when email
+verification is selected:
+
+```ts
+router.post(
+  "/resend-verification",
+  authLimiter,
+  validateBody(resendVerificationSchema),
+  resendVerificationEmail,
+);
+```
+
+`routes/app-route.ts` mounts the auth router using `router.use("/auth", authRouter)`.
+Authentication and rate limits are explicit middleware. For selected API exports,
+update the documentation contracts in `src/docs/` alongside routes, reuse the
+same validation schemas, then regenerate exports. Unit tests compare the
+registered Express routes with the documentation contracts.
 
 Services use Prisma directly through the shared client. Read the generated
 `AGENTS.md`, `.agents/skills/gold-backend-development/SKILL.md`, and
@@ -308,7 +372,7 @@ verification/reset flows, both notification types, sockets, uploads, both
 documentation formats, and Docker files:
 
 ```bash
-gold_backend create my-api --yes --database postgresql --roles admin \
+gold-backend create my-api --yes --database postgresql --roles admin \
   --email preview --verify-email --password-reset --notifications both \
   --socket --uploads --docs both --compose --docker
 ```
@@ -317,7 +381,7 @@ Unspecified options use their defaults. Email verification/reset flags require
 an email provider. Check all options with:
 
 ```bash
-gold_backend create --help
+gold-backend create --help
 ```
 
 Useful flags:
@@ -329,6 +393,7 @@ Useful flags:
 | `--clients mobile`              | Choose mobile clients; also accepts `browser` or `both`. |
 | `--no-install`                  | Generate files and install packages yourself later.      |
 | `--no-verify`                   | Skip automatic generated-project checks.                 |
+| `--no-update-check`             | Skip the optional GitHub update notice.                  |
 | `--no-git`                      | Skip Git initialization.                                 |
 
 If installation or verification fails, Gold preserves your new project folder.
@@ -341,7 +406,7 @@ with the database setup and verification above.
 
 | Problem                                         | What to check                                                                                                                                              |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gold_backend: command not found`               | Run `npm link` from the generator repository, or use `node dist/cli.js create` there. Check that your npm global bin directory is on your terminal's PATH. |
+| `gold-backend: command not found`               | Run `npm link` from the generator repository, or use `node dist/cli.js create` there. Check that your npm global bin directory is on your terminal's PATH. |
 | Project folder already exists                   | Pick a new name or parent directory. Gold does not overwrite existing folders.                                                                             |
 | Database connection fails                       | Check `.env`, database credentials, and whether the server/container is ready. Ensure the database port is available.                                      |
 | MySQL migration reports a shadow database error | Create the shadow database, set `SHADOW_DATABASE_URL`, and grant the development user access.                                                              |
@@ -349,3 +414,31 @@ with the database setup and verification above.
 | Browser request is blocked                      | Check the exact frontend origin in `CORS_ORIGINS`, cookie credentials, and CSRF headers.                                                                   |
 | A protected request returns 401                 | Sign in or refresh credentials. Logout, password changes, and expired/revoked sessions invalidate access.                                                  |
 | Swagger or a provider command is missing        | Confirm that feature was selected when creating the project.                                                                                               |
+
+## Readable code, startup and errors
+
+New projects start from `src/server.ts` in development and `dist/server.js` in
+production. `src/app.ts` builds Express without starting a listener. The generated
+`docs/development/PROJECT_STRUCTURE.md` explains startup, middleware ordering,
+feature folders, and how to add a feature.
+
+All services belong to a feature directory. Email delivery and templates live
+under `src/utils/email/`; selected Firebase setup lives under `src/utils/firebase/`.
+Named errors are exported from `src/errors/index.ts`, HTTP statuses use
+`http-status-codes`, and stable application identifiers use `ERROR_CODES`.
+The global handler normalizes expected boundary errors and hides private details.
+
+Code is formatted during generation. `.prettierrc.json` defines the format and
+`.vscode/` recommends Prettier/ESLint with format-on-save. Run `npm run format`
+and `npm run verify` after edits. These settings apply when the recommended editor
+extensions are installed; the CLI formatter remains available independently.
+
+Optional email branding uses `EMAIL_BRAND_NAME`, `EMAIL_BRAND_COLOR` (six-digit
+hex), and `EMAIL_LOGO_URL` (HTTP/HTTPS). Defaults use the generated project name.
+Selected verification and reset flows use reusable HTML/text templates.
+
+When notifications are selected, internal services call `notifyUser` from
+`services/notifications/notify.service.ts`. It uses only selected channels, saves
+inbox history before push when enabled, and returns accepted/skipped/failed push
+results. `FCM_ANDROID_CHANNEL_ID` must match the client app's notification channel.
+Push acceptance does not establish device delivery.

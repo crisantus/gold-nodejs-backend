@@ -13,6 +13,7 @@
     "url": "https://github.com/crisantus/gold-nodejs-backend/issues"
   },
   "bin": {
+    "gold-backend": "dist/cli.js",
     "gold_backend": "dist/cli.js"
   },
   "files": [
@@ -27,15 +28,17 @@
   },
   "scripts": {
     "dev": "tsx src/cli.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/build-info.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests scripts",
-    "format": "prettier --write src tests scripts docs .github README.md package.json '*.json' '*.js'",
-    "format:check": "prettier --check src tests scripts docs .github README.md package.json '*.json' '*.js'",
+    "format": "prettier --write src tests scripts docs .github README.md package.json '*.json' '*.js' .vscode AGENTS.md && npm run format:templates",
+    "format:check": "prettier --check src tests scripts docs .github README.md package.json '*.json' '*.js' .vscode AGENTS.md && npm run format:templates:check",
     "test": "vitest run",
     "test:generated": "tsx scripts/verify-generated.ts",
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build",
-    "prepare": "node scripts/prepare.mjs"
+    "prepare": "node scripts/prepare.mjs",
+    "format:templates": "node --import tsx scripts/format-templates.ts",
+    "format:templates:check": "node --import tsx scripts/format-templates.ts --check"
   },
   "dependencies": {
     "@clack/prompts": "^1.0.0",

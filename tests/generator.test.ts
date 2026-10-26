@@ -185,12 +185,135 @@ describe("preset composition", () => {
     );
     for (const content of Object.values(files))
       expect(content).not.toMatch(/__[A-Z][A-Z0-9_]+__/);
-    expect(files["src/routes/app-route.ts"]).toContain("notificationRoutes");
+    expect(files["src/routes/app-route.ts"]).toContain("notificationRouter");
     expect(JSON.parse(files["gold.config.json"]!).displayName).toBe(
       'Full "Example"',
     );
     expect(files["src/services/auth/auth.service.ts"]).toMatch(
-      /role: ["']user["']/,
+      /role: USER_ROLE\.USER/,
     );
   });
+});
+
+it.each([
+  { verifyEmail: true, passwordReset: false, docs: "swagger" },
+  { verifyEmail: false, passwordReset: true, docs: "postman" },
+  { verifyEmail: true, passwordReset: true, docs: "none" },
+])("uses KRI routers for selected auth flows: %j", async (preset) => {
+  const files = await renderProject(
+    resolveOptions({
+      name: "routes",
+      displayName: "Routes",
+      email: "preview",
+      ...preset,
+    }),
+  );
+  const router = files["src/routes/auth-route.ts"]!;
+  const controllers = files["src/controllers/action.controller.ts"]!;
+  for (const [enabled, path, schema, handler] of [
+    [
+      preset.verifyEmail,
+      "resend-verification",
+      "resendVerificationSchema",
+      "resendVerificationEmail",
+    ],
+    [
+      preset.passwordReset,
+      "forgot-password",
+      "forgotPasswordSchema",
+      "forgotPasswordEmail",
+    ],
+  ] as const) {
+    expect(router.includes(`"/${path}"`)).toBe(enabled);
+    expect(controllers.includes(`function ${handler}`)).toBe(enabled);
+    expect(
+      files["src/validators/auth.schema.ts"]!.includes(
+        `export const ${schema}`,
+      ),
+    ).toBe(enabled);
+  }
+  expect(router).toContain("validateBody(");
+  expect(files["src/routes/app-route.ts"]).toContain(
+    'router.use("/auth", authRouter)',
+  );
+  expect(files["src/routes/route-definition.ts"]).toBeUndefined();
+  expect(Object.keys(files).some((path) => path.startsWith("src/docs/"))).toBe(
+    preset.docs !== "none",
+  );
+  for (const [path, content] of Object.entries(files))
+    if (path.startsWith("src/routes/"))
+      expect(content).not.toMatch(
+        /RouteDefinition|registerRoutes|operationId|z\.strictObject/,
+      );
+});
+
+it.each(["push", "inbox", "both"] as const)(
+  "keeps %s notification channels independent",
+  async (notifications) => {
+    const files = await renderProject(
+      resolveOptions({
+        name: "channels",
+        displayName: "Channels",
+        notifications,
+        docs: "none",
+      }),
+    );
+    const manifest = JSON.parse(files["package.json"]!);
+    const push = notifications !== "inbox";
+    const inbox = notifications !== "push";
+    expect(Boolean(manifest.dependencies["firebase-admin"])).toBe(push);
+    expect(Boolean(files["src/services/notifications/inbox.service.ts"])).toBe(
+      inbox,
+    );
+    expect(Boolean(files["src/utils/firebase/messaging.ts"])).toBe(push);
+    expect(files["src/services/notifications/notify.service.ts"]).toBeDefined();
+    expect(
+      files["prisma/schema.prisma"]!.includes("model Notification {"),
+    ).toBe(inbox);
+    expect(
+      Object.keys(files).some((path) => path.startsWith("src/docs/")),
+    ).toBe(false);
+  },
+);
+
+it("generates the shared error, editor and folder conventions without optional providers", async () => {
+  const files = await renderProject(
+    resolveOptions({ name: "readable", displayName: "Readable", docs: "none" }),
+  );
+  const manifest = JSON.parse(files["package.json"]!);
+  expect(manifest.dependencies["http-status-codes"]).toBeDefined();
+  expect(files["src/errors/app-error.ts"]).toBeUndefined();
+  expect(files["src/errors/index.ts"]).toContain("CustomAPIError");
+  expect(files["src/middlewares/not-found.ts"]).toBeDefined();
+  expect(files["src/middlewares/role.ts"]).toBeDefined();
+  expect(files["src/utils/user-roles.ts"]).not.toContain("ADMIN:");
+  expect(JSON.parse(files[".prettierrc.json"]!).printWidth).toBe(100);
+  expect(
+    JSON.parse(files[".vscode/settings.json"]!)["editor.formatOnSave"],
+  ).toBe(true);
+  expect(files["docs/development/PROJECT_STRUCTURE.md"]).toContain(
+    "src/server.ts",
+  );
+  for (const path of Object.keys(files).filter((path) =>
+    path.startsWith("src/services/"),
+  ))
+    expect(path.split("/").length).toBeGreaterThanOrEqual(4);
+});
+
+it("omits unselected email actions and templates", async () => {
+  const files = await renderProject(
+    resolveOptions({
+      name: "email-only",
+      displayName: "Email only",
+      email: "smtp",
+      docs: "none",
+    }),
+  );
+  expect(files["src/utils/email/sender.ts"]).toBeDefined();
+  expect(files["src/utils/email/templates/layout.ts"]).toBeDefined();
+  expect(files["src/utils/email/preview.ts"]).toBeUndefined();
+  expect(files["src/utils/email/templates/verification.ts"]).toBeUndefined();
+  expect(files["src/utils/email/templates/password-reset.ts"]).toBeUndefined();
+  expect(files["src/services/auth/action.service.ts"]).toBeUndefined();
+  expect(files["tests/unit/actions.test.ts"]).toBeUndefined();
 });

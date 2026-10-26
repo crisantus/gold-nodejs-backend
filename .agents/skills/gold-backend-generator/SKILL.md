@@ -39,3 +39,25 @@ installing/generating/building/testing them, inspecting disabled features, and
 checking API exports. Use disposable real databases for persistence/concurrency
 claims. Report unrun checks. Never send messages, touch production databases,
 or deploy as a side effect of creation.
+
+Follow the project's KRI-style readability and layout standard: explicit Express
+routers, services grouped in services/<feature>/, focused controller functions,
+named custom errors from errors/index.ts, ERROR_CODES for application identifiers,
+and StatusCodes from http-status-codes for HTTP statuses. Keep source templates
+multiline and formatted as well as generated output. Explain startup/middleware
+order, permissions, transactions and lifecycle decisions with purpose comments.
+
+Keep email sender/templates under utils/email and Firebase setup under
+utils/firebase; domain notification services live in services/notifications.
+Only selected capabilities contribute files/imports. Preserve encrypted device
+tokens, lazy Firebase initialization, one-time auth actions, safe errors and
+notification persistence independently of push. See BACKEND_STYLE_GUIDE.md for
+examples and middleware ordering. Run template formatting checks and verify
+representative generated projects after structural or error-handling changes.
+
+Use the exact route schema with validatedBody/validatedQuery/validatedParams in
+controllers and requireActor for authenticated context. Keep the private validation
+cache's schema-checked assertion inside the validation helper; do not scatter request
+casts or non-null assertions through controllers. Transforms execute once. Socket
+state/events need explicit types and runtime validation; JSON-schema/provider values
+stay unknown until checked. Preserve safe errors when forwarding after headers are sent.

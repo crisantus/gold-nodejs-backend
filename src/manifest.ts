@@ -10,6 +10,7 @@ export function packageManifest(o: ProjectOptions) {
     express: "^5.2.1",
     "express-rate-limit": "^8.0.0",
     helmet: "^8.0.0",
+    "http-status-codes": "^2.3.0",
     jsonwebtoken: "^9.0.2",
     zod: "^4.0.0",
   };

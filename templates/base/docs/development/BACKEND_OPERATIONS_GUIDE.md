@@ -4,7 +4,9 @@ Read SETUP.md for the selected providers and exact environment settings.
 
 ## Startup and health
 
-The server validates configuration and connects Prisma before accepting traffic.
+`npm run dev` starts `src/server.ts`; production runs `dist/server.js`.
+`src/app.ts` composes Express without listening. See PROJECT_STRUCTURE.md for
+the startup and request flow. The server connects Prisma before accepting traffic.
 /api/health is liveness; /api/ready queries the required database. Provider
 credentials are validated only when their generated runtime capability is
 enabled. Health is not proof of email/push delivery.

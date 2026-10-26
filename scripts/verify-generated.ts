@@ -7,7 +7,7 @@ import { createProject } from "../src/generator.js";
 // This explicit command installs packages, but never connects to a DB or sends messages.
 const parent = await mkdtemp(join(tmpdir(), "gold-generated-verification-"));
 console.log(`Verification workspace: ${parent}`);
-for (const preset of [
+const presets = [
   {
     name: "minimal-mysql",
     displayName: "Minimal MySQL",
@@ -28,7 +28,42 @@ for (const preset of [
     compose: true,
     docker: true,
   },
-])
+  {
+    name: "reset-mysql",
+    displayName: "Password reset MySQL",
+    email: "smtp",
+    passwordReset: true,
+    docs: "swagger",
+  },
+  {
+    name: "verify-postgres",
+    displayName: "Verification PostgreSQL",
+    database: "postgresql",
+    email: "resend",
+    verifyEmail: true,
+    docs: "postman",
+  },
+  {
+    name: "push-only-postgres",
+    displayName: "Push only PostgreSQL",
+    database: "postgresql",
+    notifications: "push",
+    docs: "none",
+  },
+  {
+    name: "inbox-only-mysql",
+    displayName: "Inbox only MySQL",
+    notifications: "inbox",
+    docs: "none",
+  },
+];
+const selected = process.argv.slice(2);
+for (const name of selected)
+  if (!presets.some((preset) => preset.name === name))
+    throw new Error(`Unknown verification preset: ${name}`);
+for (const preset of presets.filter(
+  (preset) => !selected.length || selected.includes(preset.name),
+))
   await createProject(resolveOptions(preset), parent, {
     install: true,
     verify: true,

@@ -14,15 +14,16 @@ npm install -g --install-links github:crisantus/gold-nodejs-backend
 Install directly from the public GitHub repository. No npm publication is required.
 
 The installation downloads Gold Backend from GitHub, builds it automatically,
-and makes the `gold_backend` command available. You do not need to clone the
-repository or run build/link commands yourself.
+and makes the `gold-backend` command available. You do not need to clone the
+repository or run build/link commands yourself. The existing `gold_backend` command
+remains available as an alias.
 
 ## 2. Create a backend
 
 Open a terminal in the parent folder where you want your new project, then run:
 
 ```bash
-gold_backend create
+gold-backend create
 ```
 
 The wizard asks for the project name, database, roles, and features. Use the
@@ -73,14 +74,43 @@ troubleshooting, see the [detailed usage guide](docs/USAGE.md).
 
 ## Update Gold Backend
 
-After new changes are available on GitHub, rerun the installation command:
+Before `gold-backend create` starts, Gold checks GitHub for an update. When one
+is available, it shows the update command. You can ignore the notice and continue.
+Updates are optional; offline access or a failed check does not prevent creation.
+
+Check or update manually:
+
+```bash
+gold-backend check-update
+gold-backend update
+```
+
+If an older installation does not have these commands yet, update with npm:
 
 ```bash
 npm install -g --install-links github:crisantus/gold-nodejs-backend
 ```
 
-This updates the generator for future projects. Existing generated backends
-remain independent.
+Gold compares Git commits, so updates can be detected even when the package
+version stays the same. Updating the generator affects future projects; existing
+generated backends keep their code. Use `--no-update-check` to skip a check.
+
+## Uninstall Gold Backend
+
+To remove the Gold command from your computer:
+
+```bash
+gold-backend uninstall
+```
+
+The equivalent npm command also works with older installations:
+
+```bash
+npm uninstall -g gold-backend
+```
+
+Your generated backend projects, their dependencies, and databases are retained.
+They run independently of the Gold CLI.
 
 <details>
 <summary>Developing the generator itself</summary>

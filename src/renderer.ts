@@ -1,4 +1,5 @@
 import { format } from "prettier";
+import { backendFormatting } from "./formatting.js";
 import { randomBytes } from "node:crypto";
 import { readTemplates } from "./templates.js";
 import type { ProjectOptions } from "./options.js";
@@ -33,59 +34,126 @@ export async function buildFiles(
         "src/services/auth/action.service.ts",
         "src/controllers/action.controller.ts",
         "tests/integration/actions.test.ts",
+        "tests/unit/actions.test.ts",
       ])
         delete files[path];
   }
+  if (push || inbox) await add("notifications");
   if (push) await add("push");
   if (inbox) await add("inbox");
+  if (o.email !== "none") {
+    if (o.email !== "preview") delete files["src/utils/email/preview.ts"];
+    if (!o.verifyEmail)
+      delete files["src/utils/email/templates/verification.ts"];
+    if (!o.passwordReset)
+      delete files["src/utils/email/templates/password-reset.ts"];
+  }
   if (o.socket) await add("socket");
   if (o.uploads) await add("uploads");
   if (o.docs !== "none") await add("docs");
+  if (o.docs === "none") {
+    for (const path of Object.keys(files))
+      if (path.startsWith("src/docs/")) delete files[path];
+  }
   const templatedPaths = new Set(Object.keys(files));
   const imports = [
     `import { Router } from 'express';`,
-    `import { registerRoutes, type RouteDefinition } from './route-definition.js';`,
-    `import { healthRoutes } from './health-route.js';`,
-    `import { authRoutes } from './auth-route.js';`,
+    `import { checkOrigin } from '../middlewares/auth.js';`,
+    `import healthRouter from './health-route.js';`,
+    `import authRouter from './auth-route.js';`,
   ];
-  const groups = ["healthRoutes", "authRoutes"];
-  for (const [on, group, path] of [
-    [o.roles === "admin", "adminRoutes", "admin-route"],
-    [push, "deviceRoutes", "device-route"],
-    [inbox, "notificationRoutes", "notification-route"],
-    [o.uploads, "uploadRoutes", "upload-route"],
-  ] as const)
-    if (on) {
-      imports.push(`import { ${group} } from './${path}.js';`);
-      groups.push(group);
-    }
-  if (actions) {
-    imports.push(
-      `import { z } from 'zod';`,
-      `import { requestActionController, consumeActionController } from '../controllers/action.controller.js';`,
-      `import { emailSchema, passwordSchema } from '../validators/auth.schema.js';`,
+  const mounts = [
+    `router.use(healthRouter);`,
+    `router.use('/auth', authRouter);`,
+  ];
+  const contractImports: string[] = [];
+  const contractGroups: string[] = [];
+  const routerTestImports = [
+    `import healthRouter from '../../src/routes/health-route.js';`,
+    `import authRouter from '../../src/routes/auth-route.js';`,
+  ];
+  const routerTestGroups = [`['', healthRouter]`, `['/auth', authRouter]`];
+  for (const [on, name, prefix] of [
+    [o.roles === "admin", "admin", "/admin"],
+    [push, "device", "/devices"],
+    [inbox, "notification", "/notifications"],
+    [o.uploads, "upload", "/files"],
+  ] as const) {
+    if (!on) continue;
+    imports.push(`import ${name}Router from './${name}-route.js';`);
+    mounts.push(`router.use('${prefix}', ${name}Router);`);
+    contractImports.push(
+      `import { ${name}Contracts } from './${name}.contracts.js';`,
     );
-    const actionRoutes = [];
-    for (const [on, purpose, requestPath, consumePath] of [
-      [o.verifyEmail, "verify", "resend-verification", "verify-email"],
-      [o.passwordReset, "reset", "forgot-password", "reset-password"],
-    ] as const)
-      if (on) {
-        actionRoutes.push(
-          `{ method: 'post', path: '/auth/${requestPath}', operationId: 'request${purpose}', tag: 'Authentication', summary: 'Request ${purpose} email', access: 'public', sensitive: true, body: z.strictObject({ email: emailSchema }), response: z.unknown(), statusCode: 202, handler: requestActionController('${purpose}') }`,
-          `{ method: 'post', path: '/auth/${consumePath}', operationId: 'complete${purpose}', tag: 'Authentication', summary: 'Complete ${purpose} action', access: 'public', sensitive: true, body: z.strictObject({ token: z.string().min(20).max(256)${purpose === "reset" ? ", password: passwordSchema" : ""} }), response: z.unknown(), handler: consumeActionController('${purpose}') }`,
-        );
-      }
-    imports.push(
-      `const actionRoutes: RouteDefinition[] = [${actionRoutes.join(",\n")}];`,
+    contractGroups.push(`...${name}Contracts,`);
+    routerTestImports.push(
+      `import ${name}Router from '../../src/routes/${name}-route.js';`,
     );
-    groups.push("actionRoutes");
-    if (!o.passwordReset)
-      imports[imports.length - 2] =
-        `import { emailSchema } from '../validators/auth.schema.js';`;
+    routerTestGroups.push(`['${prefix}', ${name}Router]`);
   }
+  const actionSchemas: string[] = [];
+  const actionControllers: string[] = [];
+  const actionRoutes: string[] = [];
+  const actionContracts: string[] = [];
+  const actionNames: string[] = [];
+  const schemaNames: string[] = [];
+  for (const [
+    on,
+    purpose,
+    requestPath,
+    consumePath,
+    requestName,
+    consumeName,
+    requestSchema,
+    consumeSchema,
+  ] of [
+    [
+      o.verifyEmail,
+      "verify",
+      "resend-verification",
+      "verify-email",
+      "resendVerificationEmail",
+      "verifyEmail",
+      "resendVerificationSchema",
+      "verifyEmailSchema",
+    ],
+    [
+      o.passwordReset,
+      "reset",
+      "forgot-password",
+      "reset-password",
+      "forgotPasswordEmail",
+      "resetUserPassword",
+      "forgotPasswordSchema",
+      "resetPasswordSchema",
+    ],
+  ] as const) {
+    if (!on) continue;
+    actionNames.push(requestName, consumeName);
+    schemaNames.push(requestSchema, consumeSchema);
+    actionSchemas.push(
+      `export const ${requestSchema} = z.strictObject({ email: emailSchema });`,
+      `export const ${consumeSchema} = z.strictObject({ token: z.string().min(20).max(256)${purpose === "reset" ? ", password: passwordSchema" : ""} });`,
+    );
+    actionControllers.push(
+      `/** Request a ${purpose === "verify" ? "verification" : "password reset"} email without exposing account existence. */\nexport async function ${requestName}(req: Request, res: Response): Promise<void> { const input = validatedBody(req, ${requestSchema}); await requestEmailAction(res, input.email, '${purpose}'); }`,
+      `/** Complete the one-time ${purpose === "verify" ? "email verification" : "password reset"} action. */\nexport async function ${consumeName}(req: Request, res: Response): Promise<void> { const input = validatedBody(req, ${consumeSchema}); await completeEmailAction(res, input.token, '${purpose}'${purpose === "reset" ? ", input.password" : ""}); }`,
+    );
+    actionRoutes.push(
+      `router.post('/${requestPath}', authLimiter, validateBody(${requestSchema}), ${requestName});`,
+      `router.post('/${consumePath}', authLimiter, validateBody(${consumeSchema}), ${consumeName});`,
+    );
+    actionContracts.push(
+      `{ method: 'post', path: '/auth/${requestPath}', operationId: 'request${purpose}', tag: 'Authentication', summary: 'Request ${purpose} email', access: 'public', body: ${requestSchema}, response: z.unknown(), statusCode: StatusCodes.ACCEPTED },`,
+      `{ method: 'post', path: '/auth/${consumePath}', operationId: 'complete${purpose}', tag: 'Authentication', summary: 'Complete ${purpose} action', access: 'public', body: ${consumeSchema}, response: z.unknown() },`,
+    );
+  }
+  if (actions)
+    contractImports.push(
+      `import { ${schemaNames.join(", ")} } from '../validators/auth.schema.js';`,
+    );
   files["src/routes/app-route.ts"] =
-    `${imports.join("\n")}\n\n/** The route catalog drives both runtime binding and generated API documentation. */\nexport const routes: RouteDefinition[] = [${groups.map((group) => `...${group}`).join(", ")}];\nexport const apiRouter = Router();\nregisterRoutes(apiRouter, routes);\n`;
+    `${imports.join("\n")}\n\nconst router = Router();\n/** Check browser origins before entering any feature router. */\nrouter.use(checkOrigin);\n${mounts.join("\n")}\nexport default router;\n`;
   files["src/config/features.ts"] =
     `/** Selected features are code, not credentials. */\nexport const features = ${JSON.stringify(o, null, 2)};\n`;
   files["src/utils/prisma.ts"] = prismaClient(o);
@@ -119,10 +187,12 @@ export async function buildFiles(
   files[".gitignore"] =
     "node_modules/\ndist/\ncoverage/\n.env\n.env.*\n!.env.example\n.mail-preview/\nsrc/generated/\n*.log\n.DS_Store\n";
   files[".nvmrc"] = "24\n";
+  const formatting = backendFormatting;
+  files[".prettierrc.json"] = json(formatting);
   files[".prettierignore"] =
     "node_modules\ndist\ncoverage\nsrc/generated\npackage-lock.json\n.mail-preview\ndocs/api\n";
   files["eslint.config.js"] =
-    `import js from '@eslint/js';\nimport tseslint from 'typescript-eslint';\nexport default tseslint.config({ ignores: ['dist/**', 'src/generated/**', 'node_modules/**', 'coverage/**', '.mail-preview/**'] }, js.configs.recommended, ...tseslint.configs.recommended, { rules: { '@typescript-eslint/no-namespace': 'off', '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }] } });\n`;
+    `import js from '@eslint/js';\nimport tseslint from 'typescript-eslint';\nexport default tseslint.config({ ignores: ['dist/**', 'src/generated/**', 'node_modules/**', 'coverage/**', '.mail-preview/**'] }, js.configs.recommended, ...tseslint.configs.recommended, { rules: { '@typescript-eslint/no-namespace': 'off', '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }] } }, { files: ['src/**/*.ts'], rules: { '@typescript-eslint/no-non-null-assertion': 'error', '@typescript-eslint/consistent-type-imports': 'error' } });\n`;
   const envLines = [
     `NODE_ENV=development`,
     `PORT=${o.port}`,
@@ -142,7 +212,7 @@ export async function buildFiles(
   const validation: string[] = [];
   if (o.email !== "none") {
     optionalSchema.push(
-      `EMAIL_ENABLED: flag, EMAIL_FROM: z.string().default(''),`,
+      `EMAIL_ENABLED: flag, EMAIL_FROM: z.string().default(''), EMAIL_BRAND_NAME: z.string().trim().min(1).max(100).default(${JSON.stringify(o.displayName)}), EMAIL_BRAND_COLOR: z.string().regex(/^#[a-fA-F0-9]{6}$/).default('#29335C'), EMAIL_LOGO_URL: z.union([z.literal(''), z.url().regex(/^https?:\\/\\//)]).default(''),`,
     );
     envLines.push(
       `EMAIL_ENABLED=${o.email === "preview" ? "true" : "false"}`,
@@ -181,10 +251,11 @@ export async function buildFiles(
   }
   if (push) {
     optionalSchema.push(
-      `PUSH_ENABLED: flag, FIREBASE_PROJECT_ID: z.string().default(''), FIREBASE_CLIENT_EMAIL: z.string().default(''), FIREBASE_PRIVATE_KEY: z.string().default(''), PUSH_TOKEN_KEY: z.string().default(''),`,
+      `PUSH_ENABLED: flag, FIREBASE_PROJECT_ID: z.string().default(''), FIREBASE_CLIENT_EMAIL: z.string().default(''), FIREBASE_PRIVATE_KEY: z.string().default(''), PUSH_TOKEN_KEY: z.string().default(''), FCM_ANDROID_CHANNEL_ID: z.string().trim().min(1).max(100).default('general'),`,
     );
     envLines.push(
       "PUSH_ENABLED=false",
+      "FCM_ANDROID_CHANNEL_ID=general",
       "FIREBASE_PROJECT_ID=",
       "FIREBASE_CLIENT_EMAIL=",
       "FIREBASE_PRIVATE_KEY=",
@@ -227,7 +298,7 @@ export async function buildFiles(
     .replace("__PUSH_TOKEN_KEY__", randomBytes(32).toString("hex"));
   files["SETUP.md"] = setupGuide(o);
   files["README.md"] =
-    `# ${o.displayName.replace(/[\r\n]/g, " ")}\n\nGenerated by Gold Backend. See [SETUP.md](SETUP.md) for configuration and startup.\n\nArchitecture: routes → middleware → controllers → services → Prisma.\nAuthentication and protected routes are included. Selected capabilities are recorded in gold.config.json.\n\nUse npm run verify before committing. Run database integration tests only against a disposable test database; see SETUP.md.\n`;
+    `# ${o.displayName.replace(/[\r\n]/g, " ")}\n\nGenerated by Gold Backend. See [SETUP.md](SETUP.md) for configuration and startup.\n\nArchitecture: routes → middleware → controllers → services → Prisma.\nAuthentication and protected routes are included. Selected capabilities are recorded in gold.config.json.\n\nStart at src/server.ts (npm run dev); src/app.ts composes Express. Read docs/development/PROJECT_STRUCTURE.md for the folder map and request flow.\n\nUse npm run format for automatic formatting and npm run verify before committing. Run database integration tests only against a disposable test database; see SETUP.md.\n`;
   if (o.compose) {
     files["compose.yaml"] = compose(o);
     if (o.database === "mysql")
@@ -241,7 +312,104 @@ export async function buildFiles(
       "node_modules\ndist\n.env\n.env.*\n.git\n.mail-preview\ncoverage\n";
   }
   files[".github/workflows/ci.yml"] = ciWorkflow(o);
+  const templateImports = [
+    o.verifyEmail &&
+      `import { verificationEmailTemplate } from '../../utils/email/templates/verification.js';`,
+    o.passwordReset &&
+      `import { passwordResetEmailTemplate } from '../../utils/email/templates/password-reset.js';`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const templateRender = [
+    o.verifyEmail &&
+      `if (purpose === 'verify') return verificationEmailTemplate(url, expiresInMinutes);`,
+    o.passwordReset &&
+      `if (purpose === 'reset') return passwordResetEmailTemplate(url, expiresInMinutes);`,
+    `throw new BadRequestError('This email action is unavailable', ERROR_CODES.ACTION_TOKEN_INVALID);`,
+  ]
+    .filter(Boolean)
+    .join("\n");
   const slots: Record<string, string> = {
+    __SERVICE_FOLDERS__: [
+      o.roles === "admin" &&
+        "    admin/                    Administrative business rules",
+      (push || inbox) &&
+        "    notifications/            Selected inbox, devices and push workflows",
+      o.uploads &&
+        "    uploads/                  Private file ownership and storage",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    __UTILITY_FOLDERS__: [
+      o.email !== "none" &&
+        "    email/                    Selected sender, reusable layout and action templates",
+      push &&
+        "    firebase/                 Lazy FCM initialization and encrypted token storage",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    __ADMIN_ROLE__: o.roles === "admin" ? "ADMIN: 'admin'," : "",
+    __VERIFY_ERROR_IMPORT__: o.verifyEmail
+      ? `import { ForbiddenError } from '../../errors/index.js';`
+      : "",
+    __UPLOAD_ERROR_IMPORT__: o.uploads
+      ? `import { MulterError } from 'multer';`
+      : "",
+    __UPLOAD_ERROR_NORMALIZE__: o.uploads
+      ? `if (error instanceof MulterError) {
+      if (error.code === 'LIMIT_FILE_SIZE') return new PayloadTooLargeError('Upload exceeds the allowed size', ERROR_CODES.UPLOAD_INVALID);
+      return new BadRequestError('Upload exceeds the allowed count or format', ERROR_CODES.UPLOAD_INVALID);
+    }`
+      : "",
+    __ACTION_TEMPLATE_IMPORTS__: templateImports,
+    __ACTION_TEMPLATE_RENDER__: templateRender,
+    __NOTIFICATION_IMPORTS__: [
+      inbox && `import { createNotification } from './inbox.service.js';`,
+      push && `import { sendPush } from './push.service.js';`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    __SAVE_NOTIFICATION__: inbox
+      ? "await createNotification(userId, notification);"
+      : "",
+    __SEND_NOTIFICATION__: push
+      ? `try { const push = await sendPush(userId, notification); return { inbox: '${inbox ? "saved" : "disabled"}', push }; } catch { return { inbox: '${inbox ? "saved" : "disabled"}', push: { outcome: 'failed', accepted: 0 } }; }`
+      : `return { inbox: 'saved', push: { outcome: 'skipped', accepted: 0 } };`,
+    __NOTIFICATION_TEST_SETUP__: [
+      inbox &&
+        `const inbox = vi.hoisted(() => ({ createNotification: vi.fn().mockResolvedValue({ id: 'notification-id' }) })); vi.mock('../../src/services/notifications/inbox.service.js', () => inbox);`,
+      push &&
+        `const push = vi.hoisted(() => ({ sendPush: vi.fn().mockResolvedValue({ outcome: 'accepted', accepted: 1 }) })); vi.mock('../../src/services/notifications/push.service.js', () => push);`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    __NOTIFICATION_TEST_ASSERT__: `expect(result).toEqual({ inbox: '${inbox ? "saved" : "disabled"}', push: { outcome: '${push ? "accepted" : "skipped"}', accepted: ${push ? 1 : 0} } }); ${inbox ? "expect(inbox.createNotification).toHaveBeenCalledWith('user-id', expect.objectContaining({ title: 'Account update' }));" : ""} ${push ? "expect(push.sendPush).toHaveBeenCalledWith('user-id', expect.objectContaining({ data: { screen: 'inbox' } }));" : ""} ${inbox && push ? "expect(inbox.createNotification.mock.invocationCallOrder[0]).toBeLessThan(push.sendPush.mock.invocationCallOrder[0]!);" : ""}`,
+    __NOTIFICATION_FAILURE_TEST__: push
+      ? `it('reports push failures without discarding saved inbox state', async () => { push.sendPush.mockRejectedValueOnce(new Error('private provider failure')); const result = await notifyUser('user-id', { title: 'Update', body: 'Ready' }); expect(result).toEqual({ inbox: '${inbox ? "saved" : "disabled"}', push: { outcome: 'failed', accepted: 0 } }); ${inbox ? "expect(inbox.createNotification).toHaveBeenCalledTimes(1);" : ""} });`
+      : "",
+
+    __ACTION_ROUTE_IMPORTS__: actions
+      ? `import { ${actionNames.join(", ")} } from '../controllers/action.controller.js';\nimport { ${schemaNames.join(", ")} } from '../validators/auth.schema.js';`
+      : "",
+    __ACTION_ROUTES__: actionRoutes.join("\n"),
+    __ACTION_SCHEMAS__: actionSchemas.join("\n"),
+    __ACTION_CONTROLLERS__: actionControllers.join("\n"),
+    __ACTION_CONTROLLER_IMPORTS__: actions
+      ? `import { ${schemaNames.join(", ")} } from '../validators/auth.schema.js';`
+      : "",
+    __CONTRACT_IMPORTS__: contractImports.join("\n"),
+    __FEATURE_CONTRACTS__: contractGroups.join(" "),
+    __ACTION_CONTRACTS__: actionContracts.join("\n"),
+    __DOCS_TEST_ASSERTIONS__: [
+      swagger &&
+        `const openapi = buildOpenApi(); expect(buildOpenApi()).toEqual(openapi); expect(Object.values(openapi.paths).flatMap((methods) => Object.values(methods))).toHaveLength(apiContracts.length);`,
+      postman &&
+        `const collection = buildPostman(); expect(buildPostman()).toEqual(collection); expect(buildPostmanEnvironment()).toEqual(buildPostmanEnvironment()); expect(collection.item.flatMap((group) => group.item)).toHaveLength(apiContracts.length);`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    __ROUTER_TEST_IMPORTS__: routerTestImports.join("\n"),
+    __ROUTER_TEST_GROUPS__: routerTestGroups.join(", "),
     __TEST_DATABASE_URL__:
       o.database === "mysql"
         ? "mysql://test:test@127.0.0.1:1/gold_test_unit"
@@ -291,10 +459,10 @@ export async function buildFiles(
       : "",
     __EMAIL_VERIFIED_DEFAULT__: String(!o.verifyEmail),
     __VERIFY_ACCESS_EMAIL__: o.verifyEmail
-      ? `if (!session.user.emailVerified) throw new AppError(403, 'EMAIL_NOT_VERIFIED', 'Please verify your email before continuing');`
+      ? `if (!session.user.emailVerified) throw new ForbiddenError('Please verify your email before continuing', ERROR_CODES.EMAIL_NOT_VERIFIED);`
       : "",
     __VERIFY_EMAIL_LOGIN__: o.verifyEmail
-      ? `if (!user.emailVerified) throw new AppError(403, 'EMAIL_NOT_VERIFIED', 'Please verify your email before signing in');`
+      ? `if (!user.emailVerified) throw new ForbiddenError('Please verify your email before signing in', ERROR_CODES.EMAIL_NOT_VERIFIED);`
       : "",
     __DOCS_IMPORT__: swagger
       ? `import swaggerUi from 'swagger-ui-express';\nimport { buildOpenApi } from './utils/openapi.js';`
@@ -340,7 +508,7 @@ export async function buildFiles(
         })
       : content;
     files[path] = /\.(?:ts|js|json|md|ya?ml)$/.test(path)
-      ? await format(result, { filepath: path })
+      ? await format(result, { ...formatting, filepath: path })
       : result;
   }
   return files;
@@ -349,16 +517,24 @@ export async function buildFiles(
 function mailSlots(o: ProjectOptions): Record<string, string> {
   const smtp = o.email === "smtp";
   return {
-    __MAIL_IMPORT__: smtp ? `import nodemailer from 'nodemailer';` : "",
+    __MAIL_IMPORT__: smtp
+      ? `import nodemailer from 'nodemailer';`
+      : o.email === "preview"
+        ? `import { previewEmail } from './preview.js';`
+        : "",
+    __MAIL_ERROR_IMPORT__:
+      o.email === "preview"
+        ? ""
+        : `import { ProviderError, ERROR_CODES } from '../../errors/index.js';`,
     __MAIL_CLIENT__: smtp
       ? `const transport = nodemailer.createTransport({ host: env.SMTP_HOST, port: env.SMTP_PORT, secure: env.SMTP_SECURE, requireTLS: env.NODE_ENV === 'production', auth: { user: env.SMTP_USER, pass: env.SMTP_PASS }, connectionTimeout: 10000, greetingTimeout: 10000, socketTimeout: 15000 });`
       : "",
     __MAIL_SEND__:
       o.email === "preview"
-        ? "return preview(message);"
+        ? "return previewEmail(message);"
         : smtp
-          ? `try { await transport.sendMail({ ...message, from: env.EMAIL_FROM }); return { outcome: 'accepted' }; } catch { throw new AppError(502, 'EMAIL_PROVIDER_ERROR', 'The email provider could not accept the message'); }`
-          : `try { const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: \`Bearer \${env.RESEND_API_KEY}\`, 'Content-Type': 'application/json' }, body: JSON.stringify({ ...message, from: env.EMAIL_FROM }), signal: AbortSignal.timeout(15000) }); if (!response.ok) throw new Error('Rejected'); return { outcome: 'accepted' }; } catch { throw new AppError(502, 'EMAIL_PROVIDER_ERROR', 'The email provider could not accept the message'); }`,
+          ? `try { await transport.sendMail({ ...message, from: env.EMAIL_FROM }); return { outcome: 'accepted' }; } catch { throw new ProviderError('The email provider could not accept the message', ERROR_CODES.EMAIL_PROVIDER_ERROR); }`
+          : `try { const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: \`Bearer \${env.RESEND_API_KEY}\`, 'Content-Type': 'application/json' }, body: JSON.stringify({ ...message, from: env.EMAIL_FROM }), signal: AbortSignal.timeout(15000) }); if (!response.ok) throw new Error('Rejected'); return { outcome: 'accepted' }; } catch { throw new ProviderError('The email provider could not accept the message', ERROR_CODES.EMAIL_PROVIDER_ERROR); }`,
     __MAIL_CHECK__: smtp
       ? `if (!env.EMAIL_ENABLED) return 'disabled'; await transport.verify(); return 'SMTP connection verified; sender acceptance and inbox delivery not checked';`
       : o.email === "preview"

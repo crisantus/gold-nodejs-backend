@@ -17,7 +17,13 @@ jobs:
         run: |
           npm install -g --install-links --prefix "$RUNNER_TEMP/gold-cli" "git+file://$GITHUB_WORKSPACE#$GITHUB_SHA"
           "$RUNNER_TEMP/gold-cli/bin/gold_backend" --version
-          "$RUNNER_TEMP/gold-cli/bin/gold_backend" create install-smoke --yes --directory "$RUNNER_TEMP" --no-install --no-git --docs none
+          "$RUNNER_TEMP/gold-cli/bin/gold-backend" --version
+          node --input-type=module -e 'import { readFile } from "node:fs/promises"; const build = JSON.parse(await readFile(process.argv[1], "utf8")); if (build.revision !== process.argv[2]) throw new Error("Installed Git revision was not recorded");' "$RUNNER_TEMP/gold-cli/lib/node_modules/gold-backend/dist/build-info.json" "$GITHUB_SHA"
+          "$RUNNER_TEMP/gold-cli/bin/gold_backend" create install-smoke --yes --directory "$RUNNER_TEMP" --no-install --no-git --docs none --no-update-check
+          "$RUNNER_TEMP/gold-cli/bin/gold-backend" uninstall
+          test ! -e "$RUNNER_TEMP/gold-cli/bin/gold-backend"
+          test ! -e "$RUNNER_TEMP/gold-cli/bin/gold_backend"
+          test -f "$RUNNER_TEMP/install-smoke/src/server.ts"
       - run: npm pack --dry-run
   generated:
     runs-on: ubuntu-latest
